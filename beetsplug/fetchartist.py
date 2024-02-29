@@ -196,7 +196,7 @@ class FetchArtistPlugin(plugins.BeetsPlugin):
         # this is a custom value that improves the image quality
         cover = cover.replace('/ar0/', '/770x0/')
         cover = cover.replace('.jpg', '.png')
-        response = requests.get(cover, stream=True)
+        response = requests.get(cover, stream=False)
 
         content_type = response.headers.get('Content-Type')
         if content_type is None or content_type not in CONTENT_TYPES:
