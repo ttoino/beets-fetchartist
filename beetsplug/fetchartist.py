@@ -5,6 +5,7 @@ import os
 import re
 import pylast
 import requests
+import time
 
 from bs4 import BeautifulSoup
 
@@ -161,14 +162,14 @@ class FetchArtistPlugin(plugins.BeetsPlugin):
         # TODO ask the user if only some covers exist
         return False
 
-    def _request_cover(self, artist_name):
+    def _request_cover_from_lastfm(self, artist_name):
         artist = self._last_fm.get_artist(artist_name)
         url = artist.get_url()
 
         if not url:
             return None
 
-        headers = {"Accept-Language": "en-US, en;q=0.5"}
+        headers = {"Accept-Language": "en-US, en;q=0.5","User-Agent": "beets"}
         results = requests.get(url, headers=headers)
 
         # cover art endpoint was removed so this parses the html
@@ -184,11 +185,15 @@ class FetchArtistPlugin(plugins.BeetsPlugin):
 
         # strip url from style
         cover = re.search('\(([^)]+)', image).group(1)
-
-        # this is a custom value that improves the image quality
         cover = cover.replace('/ar0/', '/770x0/')
         cover = cover.replace('.jpg', '.png')
-        response = requests.get(cover, stream=False)
+        # this is a custom value that improves the image quality
+
+        return self._format_response(cover)
+
+    def _format_response(self, url):
+        response = requests.get(url, stream=False)
+        self._log.debug(url)
 
         content_type = response.headers.get('Content-Type')
         if content_type is None or content_type not in CONTENT_TYPES:
@@ -198,10 +203,72 @@ class FetchArtistPlugin(plugins.BeetsPlugin):
         extension = CONTENT_TYPE_TO_EXTENSION_MAP[content_type]
         return (response, extension)
 
+    def _request_cover_from_itunes(self, artist_name):
+       HEADERS = {"Accept-Language": "en-US, en;q=0.5"}
+       API_URL = "https://itunes.apple.com/search"
+       SUFFIX = "1200x1200bb"
+       payload = {
+            "term": artist_name,
+            "entity": "allArtist",
+            "limit": 10
+        }
+       try:
+            time.sleep(10) # lmfao itunes throttles and i'm too lazy to code anything more advanced
+            r = requests.get(API_URL, params=payload, headers=HEADERS)
+            r.raise_for_status()
+       except requests.RequestException as e:
+            self._log.debug("iTunes search failed: {0}", e)
+            return None
+
+       try:
+            candidates = r.json()["results"]
+       except ValueError as e:
+            self._log.debug("Could not decode json response: {0}", e)
+            return None
+       except KeyError as e:
+            self._log.debug(
+                "{} not found in json. Fields are {} ", e, list(r.json().keys())
+            )
+            return None
+
+       if not candidates:
+            self._log.debug(
+                "iTunes search for {!r} returned no results", payload["term"]
+            )
+            return None
+
+       for c in candidates:
+            try:
+                artist_link = c["artistLinkUrl"]
+                results = requests.get(artist_link, headers=HEADERS)
+
+                soup = BeautifulSoup(results.text, "html.parser")
+                # artist image will show up in this element
+                search = soup.find('meta', property='og:image')
+                if search and search['content']:
+                    url = search['content']
+                    url = url.replace("1200x630cw", SUFFIX)
+                    return self._format_response(url)
+                else:
+                    self._log.debug("couldn't find image in artist page: {}", artist_link)
+                    return None
+            except KeyError as e:
+                self._log.debug(
+                    "Malformed itunes candidate: {} not found in {}",  # NOQA E501
+                    e,
+                    list(c.keys())
+                )
+                return None
+
+       self._log.debug("Unknown error occured, but there must've been something to get here?")
+       return None
+
     def _fetch_cover(self, artist_info):
-        result = self._request_cover(artist_info.name)
+        result = self._request_cover_from_lastfm(artist_info.name)
         if result is None:
-            return False
+           result = self._request_cover_from_itunes(artist_info.name)
+           if result is None:
+               return False
 
         artist_info.cover, artist_info.extension = result
         return True
