@@ -88,6 +88,8 @@ class FetchArtistPlugin(plugins.BeetsPlugin):
         self._library_path = config["directory"].get()
         self._default_template = util.strip_template_path_suffix(
             config["paths"]["default"].get(), "$albumartist")
+        self._singleton_template = util.strip_template_path_suffix(
+            config["paths"]["singleton"].get(), "$artist")
 
     def commands(self):
         cmd = ui.Subcommand("fetchartist", help="download artist art")
@@ -110,6 +112,9 @@ class FetchArtistPlugin(plugins.BeetsPlugin):
         Returns an appropriate artist name for the given item. If the given item is
         part of an album, the albumartist, otherwise the artist is returned.
         """
+        if item.singleton:
+            return item.artist
+
         return item.albumartist
 
     def _get_cover_name(self, item):
@@ -119,7 +124,10 @@ class FetchArtistPlugin(plugins.BeetsPlugin):
         return FetchArtistPlugin._get_artist_from_item(item)
 
     def _create_cover_path(self, item):
-        template = self._default_template
+        if item.singleton:
+            template = self._singleton_template
+        else:
+            template = self._default_template
 
         evaluated_template = item.evaluate_template(template, True)
         cover_name = self._get_cover_name(item)
